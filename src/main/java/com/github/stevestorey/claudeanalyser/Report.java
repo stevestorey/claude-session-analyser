@@ -1,0 +1,243 @@
+package com.github.stevestorey.claudeanalyser;
+
+import com.github.stevestorey.claudeanalyser.model.Cost;
+import com.github.stevestorey.claudeanalyser.model.MessageUsage;
+import com.github.stevestorey.claudeanalyser.model.Session;
+
+import java.io.PrintStream;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+
+/**
+ * Renders the analysis to a {@link PrintStream} in either a human-readable table
+ * or a machine-readable CSV. Pure presentation: all costing/aggregation has been
+ * done by {@link Pricing} and {@link PlanEstimator} by the time we get here.
+ *
+ * <p>The flow a caller uses is:
+ * <ol>
+ *   <li>Build per-session rows with {@link #rows(List, Map)}.</li>
+ *   <li>Aggregate token totals by model with {@link #aggregateByModel(List)}.</li>
+ *   <li>Hand both to {@link #print} along with the {@link PlanEstimator.Result}.</li>
+ * </ol>
+ */
+public final class Report {
+
+    /** Output format — chosen by the user via {@code --format table|csv}. */
+    public enum Format { TABLE, CSV }
+
+    /**
+     * One row in the report: aggregated tokens and cost for a single session,
+     * plus the (estimated) extra-usage dollars attributed to that session by
+     * {@link PlanEstimator}.
+     */
+    public record SessionRow(
+            String sessionId,
+            String projectPath,
+            Instant first,
+            Instant last,
+            int messages,
+            long inputTokens,
+            long outputTokens,
+            long cacheWriteTokens,
+            long cacheReadTokens,
+            Cost cost,
+            double estimatedExtraUsage) {}
+
+    private Report() {}
+
+    /**
+     * Build per-session rows from the parsed sessions, attaching the overage
+     * dollars from a previously-run {@link PlanEstimator}. Rows come back
+     * sorted by total cost descending — convenient for "top N priciest"
+     * displays.
+     */
+    public static List<SessionRow> rows(List<Session> sessions, Map<String, Double> overageBySession) {
+        List<SessionRow> rows = new ArrayList<>();
+        for (Session s : sessions) {
+            long in = 0, out = 0, cw = 0, cr = 0;
+            Cost cost = Cost.ZERO;
+            for (MessageUsage u : s.usages()) {
+                in += u.inputTokens();
+                out += u.outputTokens();
+                cw += u.cacheCreate5mTokens() + u.cacheCreate1hTokens();
+                cr += u.cacheReadTokens();
+                cost = cost.plus(Pricing.cost(u));
+            }
+            rows.add(new SessionRow(
+                    s.sessionId(),
+                    s.projectPath(),
+                    s.firstTimestamp().orElse(null),
+                    s.lastTimestamp().orElse(null),
+                    s.usages().size(),
+                    in, out, cw, cr,
+                    cost,
+                    overageBySession.getOrDefault(s.sessionId(), 0.0)));
+        }
+        rows.sort(Comparator.comparingDouble((SessionRow r) -> r.cost().total()).reversed());
+        return rows;
+    }
+
+    /**
+     * Render the report. CSV mode emits one row per session and ignores plan and
+     * model-aggregate info (those are summarised already inline on each row).
+     * Table mode emits a multi-section human-readable summary plus a top-N table.
+     *
+     * @param top                number of priciest sessions to show in table mode
+     * @param plan               the result of {@link PlanEstimator#estimate}
+     * @param planType           the {@link PlanEstimator.Plan} that produced {@code plan}
+     *                           (used only to label the section header)
+     * @param tokensByModel      output of {@link #aggregateByModel}: model name →
+     *                           [input, output, cache-write, cache-read]
+     * @param unknownModelTokens total tokens charged at $0 because the model
+     *                           wasn't a known Anthropic family (e.g. local gguf models)
+     */
+    public static void print(PrintStream out,
+                             List<SessionRow> allRows,
+                             int top,
+                             Format format,
+                             PlanEstimator.Result plan,
+                             PlanEstimator.Plan planType,
+                             Map<String, long[]> tokensByModel,
+                             long unknownModelTokens) {
+        switch (format) {
+            case CSV   -> printCsv(out, allRows);
+            case TABLE -> printTable(out, allRows, top, plan, planType, tokensByModel, unknownModelTokens);
+        }
+    }
+
+    private static void printCsv(PrintStream out, List<SessionRow> rows) {
+        out.println("session_id,project,first_ts,last_ts,messages,input_tokens,output_tokens,cache_write_tokens,cache_read_tokens,cost_input_usd,cost_output_usd,cost_cache_write_usd,cost_cache_read_usd,total_cost_usd,estimated_extra_usage_usd");
+        for (SessionRow r : rows) {
+            out.printf("%s,%s,%s,%s,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f%n",
+                    r.sessionId(), csv(r.projectPath()),
+                    r.first(), r.last(),
+                    r.messages(),
+                    r.inputTokens(), r.outputTokens(), r.cacheWriteTokens(), r.cacheReadTokens(),
+                    r.cost().input(), r.cost().output(), r.cost().cacheWrite(), r.cost().cacheRead(),
+                    r.cost().total(), r.estimatedExtraUsage());
+        }
+    }
+
+    private static String csv(String s) {
+        if (s == null) return "";
+        if (s.contains(",") || s.contains("\"")) return "\"" + s.replace("\"", "\"\"") + "\"";
+        return s;
+    }
+
+    private static void printTable(PrintStream out, List<SessionRow> rows, int top,
+                                   PlanEstimator.Result plan,
+                                   PlanEstimator.Plan planType,
+                                   Map<String, long[]> tokensByModel,
+                                   long unknownModelTokens) {
+        long totalIn = 0, totalOut = 0, totalCw = 0, totalCr = 0;
+        Cost totalCost = Cost.ZERO;
+        for (SessionRow r : rows) {
+            totalIn += r.inputTokens();
+            totalOut += r.outputTokens();
+            totalCw += r.cacheWriteTokens();
+            totalCr += r.cacheReadTokens();
+            totalCost = totalCost.plus(r.cost());
+        }
+
+        out.println();
+        out.println("=== Claude Session Analyser ===");
+        out.printf("Sessions analysed:        %,d%n", rows.size());
+        out.printf("Total input tokens:       %,15d%n", totalIn);
+        out.printf("Total output tokens:      %,15d%n", totalOut);
+        out.printf("Total cache-write tokens: %,15d%n", totalCw);
+        out.printf("Total cache-read tokens:  %,15d%n", totalCr);
+        out.printf("Estimated total cost:     %15s (Anthropic public list pricing)%n", money(totalCost.total()));
+        out.printf("  - input:                %15s%n", money(totalCost.input()));
+        out.printf("  - output:               %15s%n", money(totalCost.output()));
+        out.printf("  - cache write:          %15s%n", money(totalCost.cacheWrite()));
+        out.printf("  - cache read:           %15s%n", money(totalCost.cacheRead()));
+        if (unknownModelTokens > 0) {
+            out.printf("Tokens from unknown / non-Anthropic models (cost = $0): %,d%n", unknownModelTokens);
+        }
+
+        out.println();
+        out.println("--- Tokens by model ---");
+        out.printf("%-40s %15s %15s %15s %15s%n", "model", "input", "output", "cache-write", "cache-read");
+        new TreeMap<>(tokensByModel).forEach((m, t) ->
+                out.printf("%-40s %,15d %,15d %,15d %,15d%n", m, t[0], t[1], t[2], t[3]));
+
+        if (!(planType instanceof PlanEstimator.None)) {
+            out.println();
+            String planName = switch (planType) {
+                case PlanEstimator.Pro p -> "Pro plan, $%.2f / 5h-window".formatted(p.windowBudgetUsd());
+                case PlanEstimator.Team t -> "Team plan, $%.2f / month".formatted(t.monthlyBudgetUsd());
+                case PlanEstimator.None n -> "none";
+            };
+            out.printf("--- Estimated 'extra usage' (heuristic; %s) ---%n", planName);
+            out.printf("Estimated included:      %15s%n", money(plan.totalIncluded()));
+            out.printf("Estimated extra usage:   %15s%n", money(plan.totalOverage()));
+            out.println("(Estimate only; the JSONL files do not record actual billing.)");
+        }
+
+        out.println();
+        int n = Math.min(top, rows.size());
+        out.printf("--- Top %d sessions by cost ---%n", n);
+        out.printf("%-38s %-22s %8s %14s %14s %14s%n",
+                "session", "project", "msgs", "tokens", "cost", "est.extra");
+        for (int i = 0; i < n; i++) {
+            SessionRow r = rows.get(i);
+            long tokens = r.inputTokens() + r.outputTokens() + r.cacheWriteTokens() + r.cacheReadTokens();
+            out.printf("%-38s %-22s %,8d %,14d %14s %14s%n",
+                    r.sessionId(),
+                    truncate(r.projectPath(), 22),
+                    r.messages(),
+                    tokens,
+                    money(r.cost().total()),
+                    money(r.estimatedExtraUsage()));
+        }
+        out.println();
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null) return "";
+        return s.length() <= max ? s : s.substring(0, max - 1) + "…";
+    }
+
+    private static String money(double v) {
+        return "$%,.2f".formatted(v);
+    }
+
+    /**
+     * Sum tokens across every assistant message in every session, grouped by model.
+     *
+     * <p>Returned map: model name → 4-element array
+     * {@code [inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens]}.
+     * Cache-write 5m and 1h are summed together here — the per-tier breakdown
+     * isn't useful at the report level. Also returns the count of tokens spent
+     * on models we don't recognise as Anthropic families (priced at $0), so the
+     * report can surface a "tokens not billed by Anthropic" footnote.
+     */
+    public static AggregateTokens aggregateByModel(List<Session> sessions) {
+        Map<String, long[]> byModel = new HashMap<>();
+        long unknown = 0;
+        for (Session s : sessions) {
+            for (MessageUsage u : s.usages()) {
+                String m = u.model() == null ? "<unknown>" : u.model();
+                long[] t = byModel.computeIfAbsent(m, k -> new long[4]);
+                t[0] += u.inputTokens();
+                t[1] += u.outputTokens();
+                t[2] += u.cacheCreate5mTokens() + u.cacheCreate1hTokens();
+                t[3] += u.cacheReadTokens();
+                if (!Pricing.isKnown(m)) {
+                    unknown += u.inputTokens() + u.outputTokens()
+                             + u.cacheCreate5mTokens() + u.cacheCreate1hTokens()
+                             + u.cacheReadTokens();
+                }
+            }
+        }
+        return new AggregateTokens(byModel, unknown);
+    }
+
+    /** Result of {@link #aggregateByModel}. */
+    public record AggregateTokens(Map<String, long[]> byModel, long unknownTokens) {}
+}
