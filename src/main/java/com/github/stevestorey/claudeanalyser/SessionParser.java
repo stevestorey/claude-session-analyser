@@ -1,7 +1,7 @@
 package com.github.stevestorey.claudeanalyser;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.github.stevestorey.claudeanalyser.model.MessageUsage;
 import com.github.stevestorey.claudeanalyser.model.Session;
 
@@ -96,7 +96,7 @@ public final class SessionParser {
 
     private static String text(JsonNode n, String field) {
         JsonNode v = n.get(field);
-        return v == null || v.isNull() ? null : v.asText();
+        return v == null || v.isNull() ? null : v.asString();
     }
 
     private static long longValue(JsonNode n, String field) {

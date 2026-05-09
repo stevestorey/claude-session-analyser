@@ -4,31 +4,33 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.0.6</version>
+        <relativePath/>
+    </parent>
+
     <groupId>com.github.stevestorey</groupId>
     <artifactId>claude-session-analyser</artifactId>
     <version>0.1.0</version>
     <packaging>jar</packaging>
 
     <properties>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <java.version>25</java.version>
         <maven.compiler.release>25</maven.compiler.release>
-        <jackson.version>2.18.2</jackson.version>
         <picocli.version>4.7.6</picocli.version>
-        <junit.version>5.11.4</junit.version>
-        <assertj.version>3.26.3</assertj.version>
     </properties>
 
     <dependencies>
+        <!-- Jackson 3 (managed by Spring Boot 4.x): note the package rename from
+             com.fasterxml.jackson.* to tools.jackson.* -->
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
+            <groupId>tools.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>${jackson.version}</version>
         </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.datatype</groupId>
-            <artifactId>jackson-datatype-jsr310</artifactId>
-            <version>${jackson.version}</version>
-        </dependency>
+
+        <!-- Not managed by Spring Boot -->
         <dependency>
             <groupId>info.picocli</groupId>
             <artifactId>picocli</artifactId>
@@ -38,13 +40,11 @@
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
-            <version>${junit.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.assertj</groupId>
             <artifactId>assertj-core</artifactId>
-            <version>${assertj.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -52,28 +52,43 @@
     <build>
         <finalName>claude-session-analyser</finalName>
         <plugins>
+            <!-- Override Spring Boot's default Java release to 25 -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
                 <configuration>
                     <release>25</release>
+                    <compilerArgs>
+                        <arg>-Xlint:deprecation</arg>
+                    </compilerArgs>
                 </configuration>
             </plugin>
+
+            <!-- This is NOT a Spring Boot application; we only use Spring Boot for
+                 dependency management. Disable spring-boot-maven-plugin's default
+                 repackage goal, and use the shade plugin to build a runnable fat jar. -->
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.5.2</version>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>repackage</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
             </plugin>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>3.6.0</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
                         <goals><goal>shade</goal></goals>
-                        <configuration>
+                        <!-- combine.self="override" wins over Spring Boot parent's
+                             pluginManagement defaults, which inject params the
+                             stand-alone shade plugin doesn't recognise. -->
+                        <configuration combine.self="override">
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">

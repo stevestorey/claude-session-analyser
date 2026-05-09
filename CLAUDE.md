@@ -17,6 +17,28 @@ java -jar target/claude-session-analyser.jar --plan none --since 2026-04-01
 
 Toolchain on this host: Amazon Corretto 25.0.3, Maven 3.9.15.
 
+## Build setup
+
+The pom inherits from `spring-boot-starter-parent:4.0.6` purely for **dependency
+management** — this is not a Spring Boot application. Versions for
+`jackson-databind`, `junit-jupiter`, and `assertj-core` come from the BOM and
+are intentionally not pinned here. Picocli is not managed by Spring Boot, so
+its version stays in `<properties>`.
+
+Two pieces of inherited config are overridden:
+- `spring-boot-maven-plugin`'s `repackage` execution is bound to phase `none`
+  (we are not producing a Spring Boot fat jar).
+- `maven-shade-plugin` configuration uses `combine.self="override"` because
+  the parent's pluginManagement injects parameters that the stand-alone shade
+  plugin (which we use for our runnable fat jar) doesn't recognise.
+
+Notable major-version implications of Spring Boot 4.0.6:
+- **Jackson 3.x** — package rename: imports use `tools.jackson.databind.*`,
+  not `com.fasterxml.jackson.databind.*`. Also `JsonNode.asText()` is
+  deprecated in favour of `asString()`.
+- **JUnit Jupiter 6.x** — package names unchanged from 5.x, source-compatible.
+- **AssertJ 3.27.x** — unchanged.
+
 ## Source layout
 
 All code is in `com.github.stevestorey.claudeanalyser`:
