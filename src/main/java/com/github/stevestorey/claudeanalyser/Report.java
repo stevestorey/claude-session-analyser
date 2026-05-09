@@ -198,6 +198,117 @@ public final class Report {
         out.println();
     }
 
+    /**
+     * Render a deep-dive view of a single session: header, token totals, cost
+     * split by category, per-model breakdown within the session, and the top-N
+     * priciest individual messages with their timestamps.
+     *
+     * <p>Always emits to {@code out} as a human-readable table; CSV is not
+     * supported for this view because the natural shape is multi-section, not
+     * tabular.
+     *
+     * @param topMessages how many of the priciest individual messages to list
+     * @param estimatedExtraUsage the overage dollars attributed to this session
+     *                            by {@link PlanEstimator}, or 0 if not applicable
+     */
+    public static void printSessionDetail(PrintStream out, Session s, int topMessages,
+                                          double estimatedExtraUsage) {
+        out.println();
+        out.println("=== Session detail ===");
+        out.printf("Session id:    %s%n", s.sessionId());
+        out.printf("Project:       %s%n", s.projectPath());
+        out.printf("File:          %s%n", s.file());
+        out.printf("First message: %s%n", s.firstTimestamp().map(Instant::toString).orElse("-"));
+        out.printf("Last message:  %s%n", s.lastTimestamp().map(Instant::toString).orElse("-"));
+        if (s.firstTimestamp().isPresent() && s.lastTimestamp().isPresent()) {
+            long secs = s.lastTimestamp().get().getEpochSecond() - s.firstTimestamp().get().getEpochSecond();
+            out.printf("Duration:      %s%n", formatDuration(secs));
+        }
+        out.printf("Messages:      %,d assistant turns%n", s.usages().size());
+
+        // Token totals (split cache-writes by TTL since this is the detail view).
+        long input = 0, output = 0, cw5m = 0, cw1h = 0, cr = 0;
+        Cost totalCost = Cost.ZERO;
+        Map<String, long[]> byModel = new HashMap<>();   // model -> [in, out, cw, cr]
+        Map<String, Cost> costByModel = new HashMap<>();
+        for (MessageUsage u : s.usages()) {
+            input += u.inputTokens();
+            output += u.outputTokens();
+            cw5m += u.cacheCreate5mTokens();
+            cw1h += u.cacheCreate1hTokens();
+            cr += u.cacheReadTokens();
+            Cost c = Pricing.cost(u);
+            totalCost = totalCost.plus(c);
+            String m = u.model() == null ? "<unknown>" : u.model();
+            long[] t = byModel.computeIfAbsent(m, k -> new long[4]);
+            t[0] += u.inputTokens();
+            t[1] += u.outputTokens();
+            t[2] += u.cacheCreate5mTokens() + u.cacheCreate1hTokens();
+            t[3] += u.cacheReadTokens();
+            costByModel.merge(m, c, Cost::plus);
+        }
+
+        out.println();
+        out.println("--- Tokens ---");
+        out.printf("Input:                %,15d%n", input);
+        out.printf("Output:               %,15d%n", output);
+        out.printf("Cache write (5m TTL): %,15d%n", cw5m);
+        out.printf("Cache write (1h TTL): %,15d%n", cw1h);
+        out.printf("Cache read:           %,15d%n", cr);
+        out.printf("Total:                %,15d%n", input + output + cw5m + cw1h + cr);
+
+        out.println();
+        out.println("--- Cost (Anthropic public list pricing) ---");
+        out.printf("Input cost:           %15s%n", money(totalCost.input()));
+        out.printf("Output cost:          %15s%n", money(totalCost.output()));
+        out.printf("Cache-write cost:     %15s%n", money(totalCost.cacheWrite()));
+        out.printf("Cache-read cost:      %15s%n", money(totalCost.cacheRead()));
+        out.printf("Total cost:           %15s%n", money(totalCost.total()));
+        if (estimatedExtraUsage > 0) {
+            out.printf("Est. extra usage:     %15s  (heuristic; see overall report)%n",
+                    money(estimatedExtraUsage));
+        }
+
+        out.println();
+        out.println("--- Tokens & cost by model ---");
+        out.printf("%-40s %12s %12s %12s %12s %12s%n",
+                "model", "input", "output", "cache-wr", "cache-rd", "cost");
+        new TreeMap<>(byModel).forEach((m, t) ->
+                out.printf("%-40s %,12d %,12d %,12d %,12d %12s%n",
+                        m, t[0], t[1], t[2], t[3],
+                        money(costByModel.getOrDefault(m, Cost.ZERO).total())));
+
+        // Top-N priciest individual messages.
+        List<MessageUsage> sorted = new ArrayList<>(s.usages());
+        sorted.sort(Comparator.comparingDouble((MessageUsage u) -> Pricing.cost(u).total()).reversed());
+        int n = Math.min(topMessages, sorted.size());
+        out.println();
+        out.printf("--- Top %d most expensive messages ---%n", n);
+        out.printf("%-25s %-30s %12s %12s %12s %12s %12s%n",
+                "timestamp", "model", "input", "output", "cache-wr", "cache-rd", "cost");
+        for (int i = 0; i < n; i++) {
+            MessageUsage u = sorted.get(i);
+            out.printf("%-25s %-30s %,12d %,12d %,12d %,12d %12s%n",
+                    u.timestamp(),
+                    truncate(u.model() == null ? "<unknown>" : u.model(), 30),
+                    u.inputTokens(), u.outputTokens(),
+                    u.cacheCreate5mTokens() + u.cacheCreate1hTokens(),
+                    u.cacheReadTokens(),
+                    money(Pricing.cost(u).total()));
+        }
+        out.println();
+    }
+
+    private static String formatDuration(long secs) {
+        if (secs < 0) return "-";
+        long h = secs / 3600;
+        long m = (secs % 3600) / 60;
+        long s = secs % 60;
+        return h > 0 ? "%dh %dm %ds".formatted(h, m, s)
+                     : m > 0 ? "%dm %ds".formatted(m, s)
+                             : "%ds".formatted(s);
+    }
+
     private static String truncate(String s, int max) {
         if (s == null) return "";
         return s.length() <= max ? s : s.substring(0, max - 1) + "…";

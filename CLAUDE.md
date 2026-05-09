@@ -13,7 +13,14 @@ java -jar target/claude-session-analyser.jar      # default: --plan pro --pro-wi
 java -jar target/claude-session-analyser.jar --format csv > usage.csv
 java -jar target/claude-session-analyser.jar --plan team --team-monthly-budget 200
 java -jar target/claude-session-analyser.jar --plan none --since 2026-04-01
+java -jar target/claude-session-analyser.jar --session <sessionId> [--top-messages 15]
 ```
+
+Detail mode (`--session <id>`) prints a deep-dive for one session: header (file
+path, first/last timestamp, duration, message count), token totals with cache
+writes split by 5m/1h TTL, cost split by category, per-model breakdown within
+the session, and the priciest individual messages. Exit code 2 if the id
+doesn't match any session under `--root`.
 
 Toolchain on this host: Amazon Corretto 25.0.3, Maven 3.9.15.
 

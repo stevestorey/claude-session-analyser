@@ -71,6 +71,14 @@ public final class Main implements Callable<Integer> {
             description = "Show top N sessions by cost in table mode (default: 20).")
     int top = 20;
 
+    @Option(names = "--session",
+            description = "Print a detailed breakdown of just this session id, instead of the overall report.")
+    String sessionId;
+
+    @Option(names = "--top-messages",
+            description = "In --session mode, how many of the priciest messages to list (default: 15).")
+    int topMessages = 15;
+
     public static void main(String[] args) {
         int rc = new CommandLine(new Main()).execute(args);
         System.exit(rc);
@@ -125,6 +133,23 @@ public final class Main implements Callable<Integer> {
 
         // Estimate first so we can attribute per-session overage onto the report rows.
         PlanEstimator.Result planResult = PlanEstimator.estimate(sessions, planType);
+
+        // --session: deep-dive on one session and skip the overall report.
+        if (sessionId != null) {
+            Session match = sessions.stream()
+                    .filter(s -> s.sessionId().equals(sessionId))
+                    .findFirst()
+                    .orElse(null);
+            if (match == null) {
+                System.err.println("Session not found: " + sessionId);
+                System.err.println("(Looked under " + root + "; --since may be excluding it.)");
+                return 2;
+            }
+            double extra = planResult.overageBySession().getOrDefault(sessionId, 0.0);
+            Report.printSessionDetail(System.out, match, topMessages, extra);
+            return 0;
+        }
+
         var rows = Report.rows(sessions, planResult.overageBySession());
         var agg = Report.aggregateByModel(sessions);
 
