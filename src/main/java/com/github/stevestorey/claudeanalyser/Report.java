@@ -22,13 +22,13 @@ import java.util.function.Function;
 /**
  * Renders the analysis to a {@link PrintStream} in either a human-readable table
  * or a machine-readable CSV. Pure presentation: all costing/aggregation has been
- * done by {@link Pricing} and {@link PlanEstimator} by the time we get here.
+ * done by {@link Pricing} by the time we get here.
  *
  * <p>The flow a caller uses is:
  * <ol>
- *   <li>Build per-session rows with {@link #rows(List, Map)}.</li>
+ *   <li>Build per-session rows with {@link #rows(List)}.</li>
  *   <li>Aggregate token totals by model with {@link #aggregateByModel(List)}.</li>
- *   <li>Hand both to {@link #print} along with the {@link PlanEstimator.Result}.</li>
+ *   <li>Hand both to {@link #print}.</li>
  * </ol>
  */
 public final class Report {
@@ -36,11 +36,7 @@ public final class Report {
     /** Output format — chosen by the user via {@code --format table|csv}. */
     public enum Format { TABLE, CSV }
 
-    /**
-     * One row in the report: aggregated tokens and cost for a single session,
-     * plus the (estimated) extra-usage dollars attributed to that session by
-     * {@link PlanEstimator}.
-     */
+    /** One row in the report: aggregated tokens and cost for a single session. */
     public record SessionRow(
             String sessionId,
             String projectPath,
@@ -51,18 +47,15 @@ public final class Report {
             long outputTokens,
             long cacheWriteTokens,
             long cacheReadTokens,
-            Cost cost,
-            double estimatedExtraUsage) {}
+            Cost cost) {}
 
     private Report() {}
 
     /**
-     * Build per-session rows from the parsed sessions, attaching the overage
-     * dollars from a previously-run {@link PlanEstimator}. Rows come back
-     * sorted by total cost descending — convenient for "top N priciest"
-     * displays.
+     * Build per-session rows from the parsed sessions. Rows come back sorted by
+     * total cost descending — convenient for "top N priciest" displays.
      */
-    public static List<SessionRow> rows(List<Session> sessions, Map<String, Double> overageBySession) {
+    public static List<SessionRow> rows(List<Session> sessions) {
         List<SessionRow> rows = new ArrayList<>();
         for (Session s : sessions) {
             long in = 0, out = 0, cw = 0, cr = 0;
@@ -81,22 +74,18 @@ public final class Report {
                     s.lastTimestamp().orElse(null),
                     s.usages().size(),
                     in, out, cw, cr,
-                    cost,
-                    overageBySession.getOrDefault(s.sessionId(), 0.0)));
+                    cost));
         }
         rows.sort(Comparator.comparingDouble((SessionRow r) -> r.cost().total()).reversed());
         return rows;
     }
 
     /**
-     * Render the report. CSV mode emits one row per session and ignores plan and
-     * model-aggregate info (those are summarised already inline on each row).
-     * Table mode emits a multi-section human-readable summary plus a top-N table.
+     * Render the report. CSV mode emits one row per session plus weekly/monthly
+     * sections. Table mode emits a multi-section human-readable summary plus a
+     * top-N table.
      *
      * @param top                number of priciest sessions to show in table mode
-     * @param plan               the result of {@link PlanEstimator#estimate}
-     * @param planType           the {@link PlanEstimator.Plan} that produced {@code plan}
-     *                           (used only to label the section header)
      * @param tokensByModel      output of {@link #aggregateByModel}: model name →
      *                           [input, output, cache-write, cache-read]
      * @param unknownModelTokens total tokens charged at $0 because the model
@@ -106,15 +95,13 @@ public final class Report {
                              List<SessionRow> allRows,
                              int top,
                              Format format,
-                             PlanEstimator.Result plan,
-                             PlanEstimator.Plan planType,
                              Map<String, long[]> tokensByModel,
                              long unknownModelTokens,
                              List<PeriodRow> weekly,
                              List<PeriodRow> monthly) {
         switch (format) {
             case CSV   -> printCsv(out, allRows, weekly, monthly);
-            case TABLE -> printTable(out, allRows, top, plan, planType,
+            case TABLE -> printTable(out, allRows, top,
                                      tokensByModel, unknownModelTokens, weekly, monthly);
         }
     }
@@ -126,15 +113,15 @@ public final class Report {
         // comment='#', csvkit) skip comment rows; for vanilla readers, just split
         // on blank lines.
         out.println("# section: sessions");
-        out.println("session_id,project,first_ts,last_ts,messages,input_tokens,output_tokens,cache_write_tokens,cache_read_tokens,cost_input_usd,cost_output_usd,cost_cache_write_usd,cost_cache_read_usd,total_cost_usd,estimated_extra_usage_usd");
+        out.println("session_id,project,first_ts,last_ts,messages,input_tokens,output_tokens,cache_write_tokens,cache_read_tokens,cost_input_usd,cost_output_usd,cost_cache_write_usd,cost_cache_read_usd,total_cost_usd");
         for (SessionRow r : rows) {
-            out.printf("%s,%s,%s,%s,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f%n",
+            out.printf("%s,%s,%s,%s,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f%n",
                     r.sessionId(), csv(r.projectPath()),
                     r.first(), r.last(),
                     r.messages(),
                     r.inputTokens(), r.outputTokens(), r.cacheWriteTokens(), r.cacheReadTokens(),
                     r.cost().input(), r.cost().output(), r.cost().cacheWrite(), r.cost().cacheRead(),
-                    r.cost().total(), r.estimatedExtraUsage());
+                    r.cost().total());
         }
 
         out.println();
@@ -165,8 +152,6 @@ public final class Report {
     }
 
     private static void printTable(PrintStream out, List<SessionRow> rows, int top,
-                                   PlanEstimator.Result plan,
-                                   PlanEstimator.Plan planType,
                                    Map<String, long[]> tokensByModel,
                                    long unknownModelTokens,
                                    List<PeriodRow> weekly,
@@ -214,34 +199,20 @@ public final class Report {
             printPeriodTable(out, "month", monthly);
         }
 
-        if (!(planType instanceof PlanEstimator.None)) {
-            out.println();
-            String planName = switch (planType) {
-                case PlanEstimator.Pro p -> "Pro plan, $%.2f / 5h-window".formatted(p.windowBudgetUsd());
-                case PlanEstimator.Team t -> "Team plan, $%.2f / month".formatted(t.monthlyBudgetUsd());
-                case PlanEstimator.None n -> "none";
-            };
-            out.printf("--- Estimated 'extra usage' (heuristic; %s) ---%n", planName);
-            out.printf("Estimated included:      %15s%n", money(plan.totalIncluded()));
-            out.printf("Estimated extra usage:   %15s%n", money(plan.totalOverage()));
-            out.println("(Estimate only; the JSONL files do not record actual billing.)");
-        }
-
         out.println();
         int n = Math.min(top, rows.size());
         out.printf("--- Top %d sessions by cost ---%n", n);
-        out.printf("%-38s %-22s %8s %14s %14s %14s%n",
-                "session", "project", "msgs", "tokens", "cost", "est.extra");
+        out.printf("%-38s %-22s %8s %14s %14s%n",
+                "session", "project", "msgs", "tokens", "cost");
         for (int i = 0; i < n; i++) {
             SessionRow r = rows.get(i);
             long tokens = r.inputTokens() + r.outputTokens() + r.cacheWriteTokens() + r.cacheReadTokens();
-            out.printf("%-38s %-22s %,8d %,14d %14s %14s%n",
+            out.printf("%-38s %-22s %,8d %,14d %14s%n",
                     r.sessionId(),
                     truncate(r.projectPath(), 22),
                     r.messages(),
                     tokens,
-                    money(r.cost().total()),
-                    money(r.estimatedExtraUsage()));
+                    money(r.cost().total()));
         }
         out.println();
     }
@@ -256,11 +227,8 @@ public final class Report {
      * tabular.
      *
      * @param topMessages how many of the priciest individual messages to list
-     * @param estimatedExtraUsage the overage dollars attributed to this session
-     *                            by {@link PlanEstimator}, or 0 if not applicable
      */
-    public static void printSessionDetail(PrintStream out, Session s, int topMessages,
-                                          double estimatedExtraUsage) {
+    public static void printSessionDetail(PrintStream out, Session s, int topMessages) {
         out.println();
         out.println("=== Session detail ===");
         out.printf("Session id:    %s%n", s.sessionId());
@@ -312,10 +280,6 @@ public final class Report {
         out.printf("Cache-write cost:     %15s%n", money(totalCost.cacheWrite()));
         out.printf("Cache-read cost:      %15s%n", money(totalCost.cacheRead()));
         out.printf("Total cost:           %15s%n", money(totalCost.total()));
-        if (estimatedExtraUsage > 0) {
-            out.printf("Est. extra usage:     %15s  (heuristic; see overall report)%n",
-                    money(estimatedExtraUsage));
-        }
 
         out.println();
         out.println("--- Tokens & cost by model ---");

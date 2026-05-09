@@ -1,18 +1,16 @@
 # claude-session-analyser
 
 Java 25 + Maven CLI that walks `~/.claude/projects/**/*.jsonl`, aggregates assistant
-token usage, applies Anthropic public list pricing, and reports per-session cost
-plus a heuristic estimate of "extra usage" billed on top of a Pro/Team plan.
+token usage, applies Anthropic public list pricing, and reports per-session cost.
 
 ## Build & run
 
 ```bash
-mvn test                                          # 7 unit tests
+mvn test                                          # unit tests
 mvn -q -DskipTests package                        # produces target/claude-session-analyser.jar (shaded fat jar)
-java -jar target/claude-session-analyser.jar      # default: --plan pro --pro-window-budget 5.00 --top 20 --format table
+java -jar target/claude-session-analyser.jar      # default: --top 20 --format table
 java -jar target/claude-session-analyser.jar --format csv > usage.csv
-java -jar target/claude-session-analyser.jar --plan team --team-monthly-budget 200
-java -jar target/claude-session-analyser.jar --plan none --since 2026-04-01
+java -jar target/claude-session-analyser.jar --since 2026-04-01
 java -jar target/claude-session-analyser.jar --session <sessionId> [--top-messages 15]
 ```
 
@@ -62,11 +60,10 @@ All code is in `com.github.stevestorey.claudeanalyser`:
 - `SessionScanner` — `Files.walk` over the projects root collecting `*.jsonl`.
 - `SessionParser` — Jackson-based line-by-line JSONL parsing; tolerant of malformed lines.
 - `Pricing` — model-family → `ModelRates` lookup using guarded switch patterns; `cost(MessageUsage)`.
-- `PlanEstimator` — sealed `Plan` interface (`Pro`, `Team`, `None`); buckets messages and computes per-bucket overage and per-session overage attribution.
-- `Report` — table and CSV rendering, plus `aggregateByModel`.
+- `Report` — table and CSV rendering, plus `aggregateByModel`/`aggregateByWeek`/`aggregateByMonth`.
 - `model/` — records: `Session`, `MessageUsage`, `Cost`, `ModelRates`.
 
-Tests in `src/test/java/.../{Pricing,SessionParser,PlanEstimator}Test.java` use JUnit 5 + AssertJ.
+Tests in `src/test/java/.../{Pricing,SessionParser}Test.java` use JUnit 5 + AssertJ.
 
 ## Session JSONL schema (the bits we use)
 
@@ -83,8 +80,9 @@ For `type == "assistant"`:
   the flat `cache_creation_input_tokens`; the parser treats that as 5m.
 - Top-level `timestamp` (ISO-8601, UTC).
 
-`service_tier` is always `"standard"` — **there is no billing-tier flag in the JSONL**,
-so any "extra usage" figure is a heuristic, not a read.
+`service_tier` is always `"standard"` — there is no billing-tier flag in the JSONL,
+so subscription-plan "extra usage" cannot be reliably derived from the data.
+The reported cost is always the Anthropic public list price for the tokens used.
 
 Local / non-Anthropic models seen in the data (e.g. `gemma-*.gguf`) get tokens counted
 but $0 cost, by design.
@@ -101,23 +99,9 @@ Mapping is by family prefix so minor version bumps don't break it.
 
 If Anthropic publishes new prices, edit `Pricing.java`.
 
-## "Extra usage" estimation
-
-`--plan pro` (default): groups all assistant messages chronologically into rolling
-5-hour windows (a new window opens at the first message ≥5h after the previous one).
-Cost above `--pro-window-budget` per window is reported as estimated extra usage and
-attributed proportionally back to contributing sessions.
-
-`--plan team`: same idea but bucketed by calendar month against `--team-monthly-budget`.
-
-`--plan none`: skip the estimate entirely.
-
-These are estimates. The real billing isn't in the data.
-
 ## Conventions in this codebase
 
 - All DTOs are records.
-- Sealed interface + pattern-matching switch is the dispatch pattern (see `Pricing.rates`,
-  `PlanEstimator.estimate`).
+- Sealed interface + pattern-matching switch is the dispatch pattern (see `Pricing.rates`).
 - The shade plugin produces a runnable fat jar; `Main-Class` is set in the manifest.
 - Comments are sparse on purpose — only used where the *why* isn't obvious from the code.

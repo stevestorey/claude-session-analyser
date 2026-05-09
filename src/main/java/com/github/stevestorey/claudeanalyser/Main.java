@@ -23,9 +23,9 @@ import java.util.concurrent.Callable;
  *                              ↓
  *                          List&lt;Session&gt;
  *                              ↓
- *                  PlanEstimator.estimate    Report.aggregateByModel
- *                              ↓                       ↓
- *                              └────────► Report.print ◄────────
+ *                       Report.aggregateByModel
+ *                              ↓
+ *                          Report.print
  * </pre>
  *
  * Argument parsing uses picocli; defaults are tuned for "just run it against
@@ -38,8 +38,7 @@ import java.util.concurrent.Callable;
         version = "0.1.0",
         description = """
                 Analyse Claude Code session JSONL files in ~/.claude/projects to
-                report token usage and estimated USD cost (Anthropic public list pricing),
-                with a heuristic estimate of 'extra usage' on top of your Pro/Team plan.
+                report token usage and estimated USD cost (Anthropic public list pricing).
                 """)
 public final class Main implements Callable<Integer> {
 
@@ -50,18 +49,6 @@ public final class Main implements Callable<Integer> {
     @Option(names = "--since",
             description = "Only include messages on/after this date (YYYY-MM-DD).")
     String since;
-
-    @Option(names = "--plan",
-            description = "Subscription plan model: pro, team, or none (default: pro).")
-    String plan = "pro";
-
-    @Option(names = "--pro-window-budget",
-            description = "USD budget per 5-hour Pro window (default: 5.00).")
-    double proWindowBudget = 5.00;
-
-    @Option(names = "--team-monthly-budget",
-            description = "USD monthly budget for Team plan (default: 100.00).")
-    double teamMonthlyBudget = 100.00;
 
     @Option(names = "--format",
             description = "Output format: table or csv (default: table).")
@@ -86,7 +73,8 @@ public final class Main implements Callable<Integer> {
 
     /**
      * picocli invokes this as the command body. Returns a process exit code: 0 on
-     * success, 1 if no JSONL files were found under {@link #root}.
+     * success, 1 if no JSONL files were found under {@link #root}, 2 if a
+     * {@code --session} id was given but didn't match.
      */
     @Override
     public Integer call() throws Exception {
@@ -123,17 +111,6 @@ public final class Main implements Callable<Integer> {
             }
         }
 
-        // Translate the --plan string into the sealed Plan hierarchy used by PlanEstimator.
-        PlanEstimator.Plan planType = switch (plan.toLowerCase()) {
-            case "pro"  -> new PlanEstimator.Pro(proWindowBudget);
-            case "team" -> new PlanEstimator.Team(teamMonthlyBudget);
-            case "none" -> new PlanEstimator.None();
-            default -> throw new IllegalArgumentException("Unknown plan: " + plan);
-        };
-
-        // Estimate first so we can attribute per-session overage onto the report rows.
-        PlanEstimator.Result planResult = PlanEstimator.estimate(sessions, planType);
-
         // --session: deep-dive on one session and skip the overall report.
         if (sessionId != null) {
             Session match = sessions.stream()
@@ -145,12 +122,11 @@ public final class Main implements Callable<Integer> {
                 System.err.println("(Looked under " + root + "; --since may be excluding it.)");
                 return 2;
             }
-            double extra = planResult.overageBySession().getOrDefault(sessionId, 0.0);
-            Report.printSessionDetail(System.out, match, topMessages, extra);
+            Report.printSessionDetail(System.out, match, topMessages);
             return 0;
         }
 
-        var rows = Report.rows(sessions, planResult.overageBySession());
+        var rows = Report.rows(sessions);
         var agg = Report.aggregateByModel(sessions);
 
         Report.Format fmt = switch (format.toLowerCase()) {
@@ -162,7 +138,7 @@ public final class Main implements Callable<Integer> {
         var weekly = Report.aggregateByWeek(sessions);
         var monthly = Report.aggregateByMonth(sessions);
 
-        Report.print(System.out, rows, top, fmt, planResult, planType,
+        Report.print(System.out, rows, top, fmt,
                 agg.byModel(), agg.unknownTokens(), weekly, monthly);
         return 0;
     }
