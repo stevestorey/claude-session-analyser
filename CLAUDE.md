@@ -22,6 +22,14 @@ writes split by 5m/1h TTL, cost split by category, per-model breakdown within
 the session, and the priciest individual messages. Exit code 2 if the id
 doesn't match any session under `--root`.
 
+The default report includes per-ISO-week and per-calendar-month rollups
+(distinct-session count, message count, tokens broken by category, and total
+cost) computed in the system timezone. Week labels are `YYYY-Www` (ISO 8601
+week-based-year), month labels are `YYYY-MM`. CSV mode emits these as extra
+sections delimited by `# section: weekly` / `# section: monthly` marker lines
+following the per-session block — pandas `read_csv(..., comment='#')` skips
+those automatically; vanilla readers can split on the blank lines.
+
 Toolchain on this host: Amazon Corretto 25.0.3, Maven 3.9.15.
 
 ## Build setup

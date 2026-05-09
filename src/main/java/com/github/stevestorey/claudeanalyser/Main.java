@@ -159,8 +159,11 @@ public final class Main implements Callable<Integer> {
             default -> throw new IllegalArgumentException("Unknown format: " + format);
         };
 
+        var weekly = Report.aggregateByWeek(sessions);
+        var monthly = Report.aggregateByMonth(sessions);
+
         Report.print(System.out, rows, top, fmt, planResult, planType,
-                agg.byModel(), agg.unknownTokens());
+                agg.byModel(), agg.unknownTokens(), weekly, monthly);
         return 0;
     }
 }

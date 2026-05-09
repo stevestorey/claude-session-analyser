@@ -6,12 +6,18 @@ import com.github.stevestorey.claudeanalyser.model.Session;
 
 import java.io.PrintStream;
 import java.time.Instant;
+import java.time.YearMonth;
+import java.time.ZoneId;
+import java.time.temporal.IsoFields;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Function;
 
 /**
  * Renders the analysis to a {@link PrintStream} in either a human-readable table
@@ -103,14 +109,23 @@ public final class Report {
                              PlanEstimator.Result plan,
                              PlanEstimator.Plan planType,
                              Map<String, long[]> tokensByModel,
-                             long unknownModelTokens) {
+                             long unknownModelTokens,
+                             List<PeriodRow> weekly,
+                             List<PeriodRow> monthly) {
         switch (format) {
-            case CSV   -> printCsv(out, allRows);
-            case TABLE -> printTable(out, allRows, top, plan, planType, tokensByModel, unknownModelTokens);
+            case CSV   -> printCsv(out, allRows, weekly, monthly);
+            case TABLE -> printTable(out, allRows, top, plan, planType,
+                                     tokensByModel, unknownModelTokens, weekly, monthly);
         }
     }
 
-    private static void printCsv(PrintStream out, List<SessionRow> rows) {
+    private static void printCsv(PrintStream out, List<SessionRow> rows,
+                                 List<PeriodRow> weekly, List<PeriodRow> monthly) {
+        // Multi-section CSV: each block has its own header line, separated by a
+        // blank line and a `# section` marker. Most CSV consumers (pandas with
+        // comment='#', csvkit) skip comment rows; for vanilla readers, just split
+        // on blank lines.
+        out.println("# section: sessions");
         out.println("session_id,project,first_ts,last_ts,messages,input_tokens,output_tokens,cache_write_tokens,cache_read_tokens,cost_input_usd,cost_output_usd,cost_cache_write_usd,cost_cache_read_usd,total_cost_usd,estimated_extra_usage_usd");
         for (SessionRow r : rows) {
             out.printf("%s,%s,%s,%s,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f%n",
@@ -120,6 +135,26 @@ public final class Report {
                     r.inputTokens(), r.outputTokens(), r.cacheWriteTokens(), r.cacheReadTokens(),
                     r.cost().input(), r.cost().output(), r.cost().cacheWrite(), r.cost().cacheRead(),
                     r.cost().total(), r.estimatedExtraUsage());
+        }
+
+        out.println();
+        out.println("# section: weekly");
+        printPeriodCsv(out, "iso_week", weekly);
+
+        out.println();
+        out.println("# section: monthly");
+        printPeriodCsv(out, "year_month", monthly);
+    }
+
+    private static void printPeriodCsv(PrintStream out, String labelHeader, List<PeriodRow> rows) {
+        out.println(labelHeader + ",sessions,messages,input_tokens,output_tokens,cache_write_tokens,cache_read_tokens,cost_input_usd,cost_output_usd,cost_cache_write_usd,cost_cache_read_usd,total_cost_usd");
+        for (PeriodRow r : rows) {
+            out.printf("%s,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f%n",
+                    r.label(), r.sessions(), r.messages(),
+                    r.inputTokens(), r.outputTokens(), r.cacheWriteTokens(), r.cacheReadTokens(),
+                    r.cost().input(), r.cost().output(),
+                    r.cost().cacheWrite(), r.cost().cacheRead(),
+                    r.cost().total());
         }
     }
 
@@ -133,7 +168,9 @@ public final class Report {
                                    PlanEstimator.Result plan,
                                    PlanEstimator.Plan planType,
                                    Map<String, long[]> tokensByModel,
-                                   long unknownModelTokens) {
+                                   long unknownModelTokens,
+                                   List<PeriodRow> weekly,
+                                   List<PeriodRow> monthly) {
         long totalIn = 0, totalOut = 0, totalCw = 0, totalCr = 0;
         Cost totalCost = Cost.ZERO;
         for (SessionRow r : rows) {
@@ -165,6 +202,17 @@ public final class Report {
         out.printf("%-40s %15s %15s %15s %15s%n", "model", "input", "output", "cache-write", "cache-read");
         new TreeMap<>(tokensByModel).forEach((m, t) ->
                 out.printf("%-40s %,15d %,15d %,15d %,15d%n", m, t[0], t[1], t[2], t[3]));
+
+        if (!weekly.isEmpty()) {
+            out.println();
+            out.println("--- Per ISO week ---");
+            printPeriodTable(out, "week", weekly);
+        }
+        if (!monthly.isEmpty()) {
+            out.println();
+            out.println("--- Per calendar month ---");
+            printPeriodTable(out, "month", monthly);
+        }
 
         if (!(planType instanceof PlanEstimator.None)) {
             out.println();
@@ -299,6 +347,18 @@ public final class Report {
         out.println();
     }
 
+    private static void printPeriodTable(PrintStream out, String labelHeader, List<PeriodRow> rows) {
+        out.printf("%-10s %8s %10s %15s %15s %15s %15s %12s%n",
+                labelHeader, "sessions", "messages", "input", "output", "cache-write", "cache-read", "cost");
+        for (PeriodRow r : rows) {
+            out.printf("%-10s %,8d %,10d %,15d %,15d %,15d %,15d %12s%n",
+                    r.label(), r.sessions(), r.messages(),
+                    r.inputTokens(), r.outputTokens(),
+                    r.cacheWriteTokens(), r.cacheReadTokens(),
+                    money(r.cost().total()));
+        }
+    }
+
     private static String formatDuration(long secs) {
         if (secs < 0) return "-";
         long h = secs / 3600;
@@ -351,4 +411,78 @@ public final class Report {
 
     /** Result of {@link #aggregateByModel}. */
     public record AggregateTokens(Map<String, long[]> byModel, long unknownTokens) {}
+
+    /**
+     * One period (a calendar week or month) summarised. {@code sessions} is the
+     * count of <em>distinct</em> sessions that had at least one assistant message
+     * in this period — a long session can span multiple periods and will be
+     * counted in each.
+     */
+    public record PeriodRow(
+            String label,
+            int sessions,
+            int messages,
+            long inputTokens,
+            long outputTokens,
+            long cacheWriteTokens,
+            long cacheReadTokens,
+            Cost cost) {}
+
+    /** Aggregate every assistant message into ISO weeks ({@code YYYY-Www}). */
+    public static List<PeriodRow> aggregateByWeek(List<Session> sessions) {
+        ZoneId zone = ZoneId.systemDefault();
+        return aggregateByPeriod(sessions, ts -> {
+            var zdt = ts.atZone(zone);
+            return "%04d-W%02d".formatted(
+                    zdt.get(IsoFields.WEEK_BASED_YEAR),
+                    zdt.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR));
+        });
+    }
+
+    /** Aggregate every assistant message into calendar months ({@code YYYY-MM}). */
+    public static List<PeriodRow> aggregateByMonth(List<Session> sessions) {
+        ZoneId zone = ZoneId.systemDefault();
+        return aggregateByPeriod(sessions, ts -> YearMonth.from(ts.atZone(zone)).toString());
+    }
+
+    /**
+     * Generic period rollup. {@code labelFn} maps each message timestamp to a
+     * sortable string label (e.g. {@code "2026-W19"} or {@code "2026-05"}).
+     * Periods come back sorted ascending by label, since the chosen label
+     * formats sort lexicographically the same as chronologically.
+     */
+    private static List<PeriodRow> aggregateByPeriod(List<Session> sessions,
+                                                    Function<Instant, String> labelFn) {
+        Map<String, long[]> totals = new TreeMap<>();         // [in,out,cw,cr,messages]
+        Map<String, double[]> costs = new HashMap<>();         // [in,out,cw,cr]
+        Map<String, Set<String>> sessionIds = new HashMap<>(); // distinct session ids per period
+
+        for (Session s : sessions) {
+            for (MessageUsage u : s.usages()) {
+                String key = labelFn.apply(u.timestamp());
+                long[] t = totals.computeIfAbsent(key, k -> new long[5]);
+                t[0] += u.inputTokens();
+                t[1] += u.outputTokens();
+                t[2] += u.cacheCreate5mTokens() + u.cacheCreate1hTokens();
+                t[3] += u.cacheReadTokens();
+                t[4] += 1;
+                Cost c = Pricing.cost(u);
+                double[] cArr = costs.computeIfAbsent(key, k -> new double[4]);
+                cArr[0] += c.input();
+                cArr[1] += c.output();
+                cArr[2] += c.cacheWrite();
+                cArr[3] += c.cacheRead();
+                sessionIds.computeIfAbsent(key, k -> new HashSet<>()).add(s.sessionId());
+            }
+        }
+
+        List<PeriodRow> rows = new ArrayList<>(totals.size());
+        totals.forEach((k, t) -> {
+            double[] c = costs.get(k);
+            rows.add(new PeriodRow(k, sessionIds.get(k).size(), (int) t[4],
+                    t[0], t[1], t[2], t[3],
+                    new Cost(c[0], c[1], c[2], c[3])));
+        });
+        return rows;
+    }
 }
