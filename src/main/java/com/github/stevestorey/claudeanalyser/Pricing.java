@@ -22,9 +22,9 @@ import com.github.stevestorey.claudeanalyser.model.ModelRates;
 public final class Pricing {
 
     // Per-MTok USD. Order: input, output, cache-write-5m, cache-write-1h, cache-read.
-    private static final ModelRates OPUS_4   = new ModelRates(15.00, 75.00, 18.75, 30.00, 1.50);
-    private static final ModelRates SONNET_4 = new ModelRates( 3.00, 15.00,  3.75,  6.00, 0.30);
-    private static final ModelRates HAIKU_4  = new ModelRates( 1.00,  5.00,  1.25,  2.00, 0.10);
+    private static final ModelRates OPUS_4   = new ModelRates(5.00, 25.00, 6.25, 10.00, 0.50);
+    private static final ModelRates SONNET_4 = new ModelRates(3.00, 15.00, 3.75,  6.00, 0.30);
+    private static final ModelRates HAIKU_4  = new ModelRates(1.00,  5.00, 1.25,  2.00, 0.10);
 
     private Pricing() {}
 

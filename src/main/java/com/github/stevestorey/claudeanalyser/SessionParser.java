@@ -11,7 +11,9 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -41,6 +43,11 @@ public final class SessionParser {
      */
     public Session parse(Path file) throws IOException {
         List<MessageUsage> usages = new ArrayList<>();
+        // Claude Code can record the same assistant API call on multiple JSONL
+        // lines (e.g. once per tool-result fan-out) with identical message.id and
+        // usage numbers. Counting each occurrence triple-bills the same call —
+        // dedupe by message.id so we count one API call once.
+        Set<String> seenMessageIds = new HashSet<>();
         String sessionId = stripExtension(file.getFileName().toString());
         String projectPath = file.getParent() == null ? "" : file.getParent().getFileName().toString();
 
@@ -58,6 +65,9 @@ public final class SessionParser {
                     if (message == null || message.isNull()) return;
                     JsonNode usage = message.get("usage");
                     if (usage == null || usage.isNull()) return;
+
+                    String messageId = text(message, "id");
+                    if (messageId != null && !seenMessageIds.add(messageId)) return;
 
                     String model = text(message, "model");
                     // Top-level timestamp on the JSONL line, not message.created_at.

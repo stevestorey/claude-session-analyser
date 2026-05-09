@@ -13,9 +13,9 @@ class PricingTest {
     @Test void opusInputAndOutput() {
         var u = new MessageUsage(Instant.EPOCH, "claude-opus-4-7", 1_000_000, 1_000_000, 0, 0, 0);
         var c = Pricing.cost(u);
-        assertThat(c.input()).isCloseTo(15.00, within(1e-9));
-        assertThat(c.output()).isCloseTo(75.00, within(1e-9));
-        assertThat(c.total()).isCloseTo(90.00, within(1e-9));
+        assertThat(c.input()).isCloseTo(5.00, within(1e-9));
+        assertThat(c.output()).isCloseTo(25.00, within(1e-9));
+        assertThat(c.total()).isCloseTo(30.00, within(1e-9));
     }
 
     @Test void sonnetCacheTiers() {

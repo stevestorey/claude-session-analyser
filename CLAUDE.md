@@ -93,7 +93,7 @@ Mapping is by family prefix so minor version bumps don't break it.
 
 | family   | input | output | cache write 5m | cache write 1h | cache read |
 |----------|------:|-------:|---------------:|---------------:|-----------:|
-| Opus 4.x | 15.00 | 75.00  | 18.75          | 30.00          | 1.50       |
+| Opus 4.x   | 5.00 | 25.00 |  6.25          | 10.00          | 0.50       |
 | Sonnet 4.x | 3.00 | 15.00 |  3.75          |  6.00          | 0.30       |
 | Haiku 4.x  | 1.00 |  5.00 |  1.25          |  2.00          | 0.10       |
 
