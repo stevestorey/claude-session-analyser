@@ -73,7 +73,7 @@ Many `type` values exist (`user`, `assistant`, `system`, `summary`, `attachment`
 carries token usage.
 
 For `type == "assistant"`:
-- `message.model` — e.g. `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`.
+- `message.model` — e.g. `claude-fable-5`, `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`.
 - `message.usage.input_tokens`, `output_tokens`, `cache_read_input_tokens`.
 - `message.usage.cache_creation.ephemeral_5m_input_tokens` and `ephemeral_1h_input_tokens`
   give the cache-write breakdown by TTL (priced differently). Older entries may only have
@@ -91,11 +91,16 @@ but $0 cost, by design.
 
 Mapping is by family prefix so minor version bumps don't break it.
 
-| family   | input | output | cache write 5m | cache write 1h | cache read |
-|----------|------:|-------:|---------------:|---------------:|-----------:|
-| Opus 4.x   | 5.00 | 25.00 |  6.25          | 10.00          | 0.50       |
-| Sonnet 4.x | 3.00 | 15.00 |  3.75          |  6.00          | 0.30       |
-| Haiku 4.x  | 1.00 |  5.00 |  1.25          |  2.00          | 0.10       |
+| family    | input | output | cache write 5m | cache write 1h | cache read |
+|-----------|------:|-------:|---------------:|---------------:|-----------:|
+| Fable 5    | 10.00 | 50.00 | 12.50          | 20.00          | 1.00       |
+| Opus 4.x   |  5.00 | 25.00 |  6.25          | 10.00          | 0.50       |
+| Sonnet 4.x |  3.00 | 15.00 |  3.75          |  6.00          | 0.30       |
+| Haiku 4.x  |  1.00 |  5.00 |  1.25          |  2.00          | 0.10       |
+
+Legacy `claude-3-*` ids are also mapped (Opus 3: 15/75, Sonnet 3.x: 3/15,
+Haiku 3.5: 0.80/4, Haiku 3: 0.25/1.25, cache rates at the standard 1.25×/2×/0.1×
+multipliers) so historical sessions still cost out correctly.
 
 If Anthropic publishes new prices, edit `Pricing.java`.
 

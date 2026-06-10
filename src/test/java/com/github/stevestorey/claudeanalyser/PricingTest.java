@@ -32,6 +32,30 @@ class PricingTest {
         assertThat(c.total()).isCloseTo(6.00, within(1e-9));
     }
 
+    @Test void fableInputAndOutput() {
+        var u = new MessageUsage(Instant.EPOCH, "claude-fable-5", 1_000_000, 1_000_000, 0, 0, 0);
+        var c = Pricing.cost(u);
+        assertThat(c.input()).isCloseTo(10.00, within(1e-9));
+        assertThat(c.output()).isCloseTo(50.00, within(1e-9));
+        assertThat(c.total()).isCloseTo(60.00, within(1e-9));
+    }
+
+    @Test void fableCacheTiers() {
+        var u = new MessageUsage(Instant.EPOCH, "claude-fable-5",
+                0, 0, 1_000_000, 1_000_000, 1_000_000);
+        var c = Pricing.cost(u);
+        assertThat(c.cacheWrite()).isCloseTo(12.50 + 20.00, within(1e-9));
+        assertThat(c.cacheRead()).isCloseTo(1.00, within(1e-9));
+    }
+
+    @Test void legacyClaude3Families() {
+        assertThat(Pricing.rates("claude-3-opus-20240229").input()).isEqualTo(15.00);
+        assertThat(Pricing.rates("claude-3-5-sonnet-20241022").input()).isEqualTo(3.00);
+        assertThat(Pricing.rates("claude-3-7-sonnet-20250219").input()).isEqualTo(3.00);
+        assertThat(Pricing.rates("claude-3-5-haiku-20241022").input()).isEqualTo(0.80);
+        assertThat(Pricing.rates("claude-3-haiku-20240307").input()).isEqualTo(0.25);
+    }
+
     @Test void unknownModelHasZeroCost() {
         var u = new MessageUsage(Instant.EPOCH, "gemma-9b.gguf", 1_000_000, 1_000_000, 0, 0, 0);
         assertThat(Pricing.isKnown(u.model())).isFalse();

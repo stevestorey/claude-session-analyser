@@ -5,13 +5,14 @@ import com.github.stevestorey.claudeanalyser.model.MessageUsage;
 import com.github.stevestorey.claudeanalyser.model.ModelRates;
 
 /**
- * Anthropic public list pricing (USD per million tokens) for the Claude 4.x families
+ * Anthropic public list pricing (USD per million tokens) for the Claude model families
  * and the cost-from-usage calculator.
  *
- * <p>Lookup is done by family <em>prefix</em> ({@code claude-opus-},
- * {@code claude-sonnet-}, {@code claude-haiku-}) so that minor version bumps
+ * <p>Lookup is done by family <em>prefix</em> ({@code claude-fable-},
+ * {@code claude-opus-}, {@code claude-sonnet-}, {@code claude-haiku-}, plus the
+ * legacy {@code claude-3-*} id format) so that minor version bumps
  * (4-7, 4-6, 4-5-20250929 …) all resolve to the same rate card without code
- * changes. If/when Anthropic changes published prices, edit the three
+ * changes. If/when Anthropic changes published prices, edit the
  * {@code ModelRates} constants below.
  *
  * <p>Anything that isn't a recognised Anthropic model — including local models like
@@ -22,9 +23,15 @@ import com.github.stevestorey.claudeanalyser.model.ModelRates;
 public final class Pricing {
 
     // Per-MTok USD. Order: input, output, cache-write-5m, cache-write-1h, cache-read.
-    private static final ModelRates OPUS_4   = new ModelRates(5.00, 25.00, 6.25, 10.00, 0.50);
-    private static final ModelRates SONNET_4 = new ModelRates(3.00, 15.00, 3.75,  6.00, 0.30);
-    private static final ModelRates HAIKU_4  = new ModelRates(1.00,  5.00, 1.25,  2.00, 0.10);
+    private static final ModelRates FABLE_5    = new ModelRates(10.00, 50.00, 12.50, 20.00, 1.00);
+    private static final ModelRates OPUS_4     = new ModelRates( 5.00, 25.00,  6.25, 10.00, 0.50);
+    private static final ModelRates SONNET_4   = new ModelRates( 3.00, 15.00,  3.75,  6.00, 0.30);
+    private static final ModelRates HAIKU_4    = new ModelRates( 1.00,  5.00,  1.25,  2.00, 0.10);
+    // Legacy claude-3-* id format (older ids put the major version before the tier).
+    private static final ModelRates OPUS_3     = new ModelRates(15.00, 75.00, 18.75, 30.00, 1.50);
+    private static final ModelRates SONNET_3   = new ModelRates( 3.00, 15.00,  3.75,  6.00, 0.30);
+    private static final ModelRates HAIKU_3_5  = new ModelRates( 0.80,  4.00,  1.00,  1.60, 0.08);
+    private static final ModelRates HAIKU_3    = new ModelRates( 0.25,  1.25,  0.30,  0.50, 0.03);
 
     private Pricing() {}
 
@@ -38,9 +45,17 @@ public final class Pricing {
         // Guarded patterns let the switch match by prefix instead of exact value,
         // which keeps the code working as Anthropic ships new minor revisions.
         return switch (m) {
+            case String s when s.startsWith("claude-fable-")  -> FABLE_5;
             case String s when s.startsWith("claude-opus-")   -> OPUS_4;
             case String s when s.startsWith("claude-sonnet-") -> SONNET_4;
             case String s when s.startsWith("claude-haiku-")  -> HAIKU_4;
+            // Legacy claude-3-* ids; 3-5-haiku must be tested before 3-haiku.
+            case String s when s.startsWith("claude-3-opus")    -> OPUS_3;
+            case String s when s.startsWith("claude-3-sonnet")
+                            || s.startsWith("claude-3-5-sonnet")
+                            || s.startsWith("claude-3-7-sonnet") -> SONNET_3;
+            case String s when s.startsWith("claude-3-5-haiku") -> HAIKU_3_5;
+            case String s when s.startsWith("claude-3-haiku")   -> HAIKU_3;
             default -> ModelRates.ZERO;
         };
     }
