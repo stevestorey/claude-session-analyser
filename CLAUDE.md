@@ -80,9 +80,27 @@ For `type == "assistant"`:
   the flat `cache_creation_input_tokens`; the parser treats that as 5m.
 - Top-level `timestamp` (ISO-8601, UTC).
 
+A single assistant API response is written as **multiple JSONL lines — one per
+content block** (thinking / text / tool_use), each carrying an *identical* full
+`message.usage` object. Counting every line N-times-bills the one call, so the
+parser dedupes: it counts each `message.id` + top-level `requestId` once. (In
+observed data the two are strictly 1:1; the requestId is paired in only to guard
+against id reuse across retries.) A 40h session can have ~1,400 assistant lines
+collapse to ~600 actual API calls.
+
 `service_tier` is always `"standard"` — there is no billing-tier flag in the JSONL,
 so subscription-plan "extra usage" cannot be reliably derived from the data.
 The reported cost is always the Anthropic public list price for the tokens used.
+
+**Per-session totals undercount the live `claude` CLI / `/cost`, and that gap is
+not a parser bug — it's unrecoverable from the file.** Claude Code makes billable
+API calls it never persists as `assistant` turns: conversation **compaction /
+summarization** (each re-reads the whole context → large cache-read + a long
+summary output) and background **haiku** chores (title generation, topic
+classification). None of that usage appears anywhere in the `.jsonl` (verified:
+every `*_tokens` field lives on an `assistant` line), so this tool can only ever
+report the usage actually recorded in the transcript. A session that shows zero
+haiku tokens here may still show a haiku line in the CLI for exactly this reason.
 
 Local / non-Anthropic models seen in the data (e.g. `gemma-*.gguf`) get tokens counted
 but $0 cost, by design.

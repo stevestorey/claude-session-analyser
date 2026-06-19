@@ -43,11 +43,13 @@ public final class SessionParser {
      */
     public Session parse(Path file) throws IOException {
         List<MessageUsage> usages = new ArrayList<>();
-        // Claude Code can record the same assistant API call on multiple JSONL
-        // lines (e.g. once per tool-result fan-out) with identical message.id and
-        // usage numbers. Counting each occurrence triple-bills the same call —
-        // dedupe by message.id so we count one API call once.
-        Set<String> seenMessageIds = new HashSet<>();
+        // Claude Code writes one JSONL line per content block (thinking / text /
+        // tool_use) of a single assistant response, stamping the *same* full usage
+        // object on each. Counting every line N-times-bills the one API call — so
+        // dedupe and count each call once. The key is message.id + requestId: id
+        // alone is enough for current data (strict 1:1 with requestId), but pairing
+        // in the requestId guards against id reuse across retries/regenerations.
+        Set<String> seenCalls = new HashSet<>();
         String sessionId = stripExtension(file.getFileName().toString());
         String projectPath = file.getParent() == null ? "" : file.getParent().getFileName().toString();
 
@@ -66,8 +68,12 @@ public final class SessionParser {
                     JsonNode usage = message.get("usage");
                     if (usage == null || usage.isNull()) return;
 
+                    // Top-level requestId; message.id lives on the nested message.
                     String messageId = text(message, "id");
-                    if (messageId != null && !seenMessageIds.add(messageId)) return;
+                    if (messageId != null) {
+                        String callKey = messageId + '\0' + text(root, "requestId");
+                        if (!seenCalls.add(callKey)) return;
+                    }
 
                     String model = text(message, "model");
                     // Top-level timestamp on the JSONL line, not message.created_at.
