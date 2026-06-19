@@ -36,6 +36,17 @@ public final class Report {
     /** Output format — chosen by the user via {@code --format table|csv}. */
     public enum Format { TABLE, CSV }
 
+    /**
+     * Caveat shown on every report: the JSONL transcript only records assistant
+     * turns, so housekeeping API calls Claude Code makes but never persists —
+     * conversation compaction/summarization (large cache-read + summary output)
+     * and background haiku chores (title generation, topic classification) — are
+     * invisible here. Totals therefore undercount the live {@code claude} CLI.
+     */
+    static final String EXCLUSIONS_NOTE =
+            "Note: excludes usage not recorded in the transcript — compaction/summarization "
+            + "and background housekeeping (e.g. title generation). Totals undercount the live CLI.";
+
     /** One row in the report: aggregated tokens and cost for a single session. */
     public record SessionRow(
             String sessionId,
@@ -112,6 +123,7 @@ public final class Report {
         // blank line and a `# section` marker. Most CSV consumers (pandas with
         // comment='#', csvkit) skip comment rows; for vanilla readers, just split
         // on blank lines.
+        out.println("# " + EXCLUSIONS_NOTE);
         out.println("# section: sessions");
         out.println("session_id,project,first_ts,last_ts,messages,input_tokens,output_tokens,cache_write_tokens,cache_read_tokens,cost_input_usd,cost_output_usd,cost_cache_write_usd,cost_cache_read_usd,total_cost_usd");
         for (SessionRow r : rows) {
@@ -181,6 +193,7 @@ public final class Report {
         if (unknownModelTokens > 0) {
             out.printf("Tokens from unknown / non-Anthropic models (cost = $0): %,d%n", unknownModelTokens);
         }
+        out.println(EXCLUSIONS_NOTE);
 
         out.println();
         out.println("--- Tokens by model ---");
@@ -202,14 +215,15 @@ public final class Report {
         out.println();
         int n = Math.min(top, rows.size());
         out.printf("--- Top %d sessions by cost ---%n", n);
-        out.printf("%-38s %-22s %8s %14s %14s%n",
-                "session", "project", "msgs", "tokens", "cost");
+        out.printf("%-38s %-22s %-16s %8s %14s %14s%n",
+                "session", "project", "started", "msgs", "tokens", "cost");
         for (int i = 0; i < n; i++) {
             SessionRow r = rows.get(i);
             long tokens = r.inputTokens() + r.outputTokens() + r.cacheWriteTokens() + r.cacheReadTokens();
-            out.printf("%-38s %-22s %,8d %,14d %14s%n",
+            out.printf("%-38s %-22s %-16s %,8d %,14d %14s%n",
                     r.sessionId(),
                     truncate(r.projectPath(), 22),
+                    formatStart(r.first()),
                     r.messages(),
                     tokens,
                     money(r.cost().total()));
@@ -280,6 +294,7 @@ public final class Report {
         out.printf("Cache-write cost:     %15s%n", money(totalCost.cacheWrite()));
         out.printf("Cache-read cost:      %15s%n", money(totalCost.cacheRead()));
         out.printf("Total cost:           %15s%n", money(totalCost.total()));
+        out.println(EXCLUSIONS_NOTE);
 
         out.println();
         out.println("--- Tokens & cost by model ---");
@@ -332,6 +347,15 @@ public final class Report {
                      : m > 0 ? "%dm %ds".formatted(m, s)
                              : "%ds".formatted(s);
     }
+
+    /** Session start as {@code yyyy-MM-dd HH:mm} in the system zone; {@code "-"} if unknown. */
+    private static String formatStart(Instant ts) {
+        if (ts == null) return "-";
+        return START_FORMAT.format(ts.atZone(ZoneId.systemDefault()));
+    }
+
+    private static final java.time.format.DateTimeFormatter START_FORMAT =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private static String truncate(String s, int max) {
         if (s == null) return "";
