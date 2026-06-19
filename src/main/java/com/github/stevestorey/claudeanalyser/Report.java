@@ -204,12 +204,12 @@ public final class Report {
         if (!weekly.isEmpty()) {
             out.println();
             out.println("--- Per ISO week ---");
-            printPeriodTable(out, "week", weekly);
+            printPeriodTable(out, "week", weekly, false);
         }
         if (!monthly.isEmpty()) {
             out.println();
             out.println("--- Per calendar month ---");
-            printPeriodTable(out, "month", monthly);
+            printPeriodTable(out, "month", monthly, true);
         }
 
         out.println();
@@ -326,15 +326,31 @@ public final class Report {
         out.println();
     }
 
-    private static void printPeriodTable(PrintStream out, String labelHeader, List<PeriodRow> rows) {
+    private static void printPeriodTable(PrintStream out, String labelHeader,
+                                         List<PeriodRow> rows, boolean withTotal) {
         out.printf("%-10s %8s %10s %15s %15s %15s %15s %12s%n",
                 labelHeader, "sessions", "messages", "input", "output", "cache-write", "cache-read", "cost");
+        long in = 0, out_ = 0, cw = 0, cr = 0, msgs = 0;
+        Set<String> distinctSessions = new HashSet<>();
+        Cost total = Cost.ZERO;
         for (PeriodRow r : rows) {
             out.printf("%-10s %,8d %,10d %,15d %,15d %,15d %,15d %12s%n",
                     r.label(), r.sessions(), r.messages(),
                     r.inputTokens(), r.outputTokens(),
                     r.cacheWriteTokens(), r.cacheReadTokens(),
                     money(r.cost().total()));
+            in += r.inputTokens();
+            out_ += r.outputTokens();
+            cw += r.cacheWriteTokens();
+            cr += r.cacheReadTokens();
+            msgs += r.messages();
+            total = total.plus(r.cost());
+        }
+        if (withTotal) {
+            // Sessions spanning multiple periods are double-counted across rows, so
+            // a per-period session-count sum would be misleading — show "-" instead.
+            out.printf("%-10s %8s %,10d %,15d %,15d %,15d %,15d %12s%n",
+                    "TOTAL", "-", msgs, in, out_, cw, cr, money(total.total()));
         }
     }
 
