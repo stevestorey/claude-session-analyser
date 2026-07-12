@@ -225,7 +225,7 @@ public final class Report {
             out.printf("%-38s %-30s %-22s %-16s %,8d %,14d %14s%n",
                     r.sessionId(),
                     truncate(r.title(), 30),
-                    truncate(r.projectPath(), 22),
+                    truncateStart(r.projectPath(), 22),
                     formatStart(r.first()),
                     r.messages(),
                     tokens,
@@ -375,6 +375,17 @@ public final class Report {
 
     private static final java.time.format.DateTimeFormatter START_FORMAT =
             java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+
+    /**
+     * Render an encoded-cwd label in a narrow column: strip the hyphens the
+     * encoding adds at the edges, then keep the <em>end</em> of the string —
+     * the leading directories are the noise, the project name is at the tail.
+     */
+    private static String truncateStart(String s, int max) {
+        if (s == null) return "";
+        s = s.replaceAll("^-+|-+$", "");
+        return s.length() <= max ? s : "…" + s.substring(s.length() - (max - 1));
+    }
 
     private static String truncate(String s, int max) {
         if (s == null) return "";
