@@ -36,4 +36,33 @@ class SessionParserTest {
         assertThat(second.cacheCreate5mTokens()).isEqualTo(7);
         assertThat(second.cacheCreate1hTokens()).isZero();
     }
+
+    @Test void picksUpLastAiTitle(@org.junit.jupiter.api.io.TempDir Path tmp) throws Exception {
+        Path f = tmp.resolve("abc.jsonl");
+        Files.writeString(f, """
+                {"type":"ai-title","aiTitle":"First title","sessionId":"abc"}
+                {"type":"ai-title","aiTitle":"Refined title","sessionId":"abc"}
+                """);
+
+        assertThat(new SessionParser().parse(f).title()).isEqualTo("Refined title");
+    }
+
+    @Test void subagentFileGetsProjectFromGrandparentAndTitleFromMetaJson(
+            @org.junit.jupiter.api.io.TempDir Path tmp) throws Exception {
+        // Subagent layout: <project>/<parentSessionId>/subagents/agent-*.jsonl
+        Path dir = tmp.resolve("-opt-projects-paris/83394898-cc13/subagents");
+        Files.createDirectories(dir);
+        Path f = dir.resolve("agent-a8fc806df9076f57f.jsonl");
+        Files.writeString(f, """
+                {"type":"assistant","timestamp":"2026-05-09T12:00:01Z","message":{"model":"claude-opus-4-7","usage":{"input_tokens":1,"output_tokens":2}}}
+                """);
+        Files.writeString(dir.resolve("agent-a8fc806df9076f57f.meta.json"),
+                """
+                {"agentType":"statusline-setup","description":"Add colors to status line","toolUseId":"toolu_01"}
+                """);
+
+        var s = new SessionParser().parse(f);
+        assertThat(s.projectPath()).isEqualTo("-opt-projects-paris");
+        assertThat(s.title()).isEqualTo("Add colors to status line");
+    }
 }

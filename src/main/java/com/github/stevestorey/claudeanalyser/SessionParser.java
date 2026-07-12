@@ -54,7 +54,7 @@ public final class SessionParser {
         // the title as the conversation evolves, so the last ai-title line wins.
         String[] title = new String[1];
         String sessionId = stripExtension(file.getFileName().toString());
-        String projectPath = file.getParent() == null ? "" : file.getParent().getFileName().toString();
+        String projectPath = projectLabel(file);
 
         try (Stream<String> lines = Files.lines(file)) {
             lines.forEach(line -> {
@@ -118,7 +118,46 @@ public final class SessionParser {
             });
         }
 
+        // Subagent transcripts have no ai-title lines, but their sidecar
+        // meta.json carries the Task tool's human-readable description.
+        if (title[0] == null) title[0] = metaDescription(file);
+
         return new Session(sessionId, file, projectPath, title[0], List.copyOf(usages));
+    }
+
+    /**
+     * Project label for a session file. Normally the immediate parent directory
+     * (Claude Code's encoded-cwd label), but subagent transcripts are nested
+     * inside their parent session's directory —
+     * {@code <project>/<parentSessionId>/subagents/agent-*.jsonl} — so for those
+     * the real project label is three levels up.
+     */
+    private static String projectLabel(Path file) {
+        Path dir = file.getParent();
+        if (dir == null) return "";
+        if ("subagents".equals(dir.getFileName().toString())
+                && dir.getParent() != null
+                && dir.getParent().getParent() != null) {
+            return dir.getParent().getParent().getFileName().toString();
+        }
+        return dir.getFileName().toString();
+    }
+
+    /**
+     * Description from the session's sidecar {@code <name>.meta.json}, or
+     * {@code null} if the file is absent or unreadable. Written by Claude Code
+     * next to each subagent transcript.
+     */
+    private String metaDescription(Path file) {
+        Path meta = file.resolveSibling(
+                stripExtension(file.getFileName().toString()) + ".meta.json");
+        if (!Files.isRegularFile(meta)) return null;
+        try {
+            String d = text(mapper.readTree(Files.readString(meta)), "description");
+            return d == null || d.isBlank() ? null : d;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static String text(JsonNode n, String field) {
