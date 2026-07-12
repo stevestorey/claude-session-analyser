@@ -72,6 +72,26 @@ Many `type` values exist (`user`, `assistant`, `system`, `summary`, `attachment`
 `permission-mode`, `file-history-snapshot`, `ai-title`, `last-prompt`); only `assistant`
 carries token usage.
 
+For `type == "ai-title"`: the `aiTitle` field is the auto-generated session
+description. The CLI rewrites it as the conversation evolves, so the parser
+keeps the *last* one seen; it becomes `Session.title` and is shown (truncated
+to 30 chars) as the `description` column in the top-sessions table.
+
+**Subagent transcripts** are nested inside their parent session's directory:
+`<encoded-cwd>/<parentSessionId>/subagents/agent-*.jsonl`. The parser detects
+the literal `subagents` parent dir and takes the project label from three
+levels up instead. Agent files have no `ai-title` lines, so the title falls
+back to the `description` field of the sidecar `agent-*.meta.json` (which also
+carries `agentType` and the spawning Task call's `toolUseId`). Each agent line
+also has top-level `cwd`, `gitBranch`, and `sessionId` (= the *parent*
+session's id) — not currently used, but that's how a subagent's cost could be
+attributed back to the session that spawned it.
+
+In the table's `project` column the encoded-cwd label is shown with
+leading/trailing hyphens stripped and left-truncated (keeping the last 22
+chars, with a leading ellipsis) since the project name is at the tail. CSV
+carries the full encoded label.
+
 For `type == "assistant"`:
 - `message.model` — e.g. `claude-fable-5`, `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`.
 - `message.usage.input_tokens`, `output_tokens`, `cache_read_input_tokens`.
