@@ -103,7 +103,7 @@ public final class Main implements Callable<Integer> {
                             .filter(u -> !u.timestamp().isBefore(sinceTs))
                             .toList();
                     if (filtered.isEmpty()) continue;
-                    s = new Session(s.sessionId(), s.file(), s.projectPath(), filtered);
+                    s = new Session(s.sessionId(), s.file(), s.projectPath(), s.title(), filtered);
                 }
                 if (!s.usages().isEmpty()) sessions.add(s);
             } catch (Exception e) {

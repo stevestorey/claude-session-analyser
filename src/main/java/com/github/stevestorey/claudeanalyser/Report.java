@@ -51,6 +51,7 @@ public final class Report {
     public record SessionRow(
             String sessionId,
             String projectPath,
+            String title,
             Instant first,
             Instant last,
             int messages,
@@ -81,6 +82,7 @@ public final class Report {
             rows.add(new SessionRow(
                     s.sessionId(),
                     s.projectPath(),
+                    s.title(),
                     s.firstTimestamp().orElse(null),
                     s.lastTimestamp().orElse(null),
                     s.usages().size(),
@@ -215,13 +217,14 @@ public final class Report {
         out.println();
         int n = Math.min(top, rows.size());
         out.printf("--- Top %d sessions by cost ---%n", n);
-        out.printf("%-38s %-22s %-16s %8s %14s %14s%n",
-                "session", "project", "started", "msgs", "tokens", "cost");
+        out.printf("%-38s %-30s %-22s %-16s %8s %14s %14s%n",
+                "session", "description", "project", "started", "msgs", "tokens", "cost");
         for (int i = 0; i < n; i++) {
             SessionRow r = rows.get(i);
             long tokens = r.inputTokens() + r.outputTokens() + r.cacheWriteTokens() + r.cacheReadTokens();
-            out.printf("%-38s %-22s %-16s %,8d %,14d %14s%n",
+            out.printf("%-38s %-30s %-22s %-16s %,8d %,14d %14s%n",
                     r.sessionId(),
+                    truncate(r.title(), 30),
                     truncate(r.projectPath(), 22),
                     formatStart(r.first()),
                     r.messages(),

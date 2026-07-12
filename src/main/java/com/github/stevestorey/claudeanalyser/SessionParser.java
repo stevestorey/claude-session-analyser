@@ -50,6 +50,9 @@ public final class SessionParser {
         // alone is enough for current data (strict 1:1 with requestId), but pairing
         // in the requestId guards against id reuse across retries/regenerations.
         Set<String> seenCalls = new HashSet<>();
+        // Holder because it's assigned from inside the lambda; the CLI rewrites
+        // the title as the conversation evolves, so the last ai-title line wins.
+        String[] title = new String[1];
         String sessionId = stripExtension(file.getFileName().toString());
         String projectPath = file.getParent() == null ? "" : file.getParent().getFileName().toString();
 
@@ -59,9 +62,17 @@ public final class SessionParser {
                 try {
                     JsonNode root = mapper.readTree(line);
 
+                    String type = text(root, "type");
+
+                    if ("ai-title".equals(type)) {
+                        String t = text(root, "aiTitle");
+                        if (t != null && !t.isBlank()) title[0] = t;
+                        return;
+                    }
+
                     // Only assistant messages carry token usage; everything else
                     // is conversation/state metadata we don't bill against.
-                    if (!"assistant".equals(text(root, "type"))) return;
+                    if (!"assistant".equals(type)) return;
 
                     JsonNode message = root.get("message");
                     if (message == null || message.isNull()) return;
@@ -107,7 +118,7 @@ public final class SessionParser {
             });
         }
 
-        return new Session(sessionId, file, projectPath, List.copyOf(usages));
+        return new Session(sessionId, file, projectPath, title[0], List.copyOf(usages));
     }
 
     private static String text(JsonNode n, String field) {
